@@ -10,6 +10,7 @@ from services.ai import answer_student_question
 
 router = Router()
 
+chat_histories = {}
 
 class Register(StatesGroup):
     name = State()
@@ -21,6 +22,9 @@ class Register(StatesGroup):
 @router.message(CommandStart())
 async def start(message: types.Message, state: FSMContext):
     await state.clear()
+
+    # Сбрасываем историю чата при /start
+    chat_histories.pop(message.from_user.id, None)
 
     user = await get_user_info(message.from_user.id)
     if user:
@@ -82,16 +86,27 @@ async def student_question(message: types.Message):
         return
 
     full_name, group_name = user
+    user_id = message.from_user.id
 
     await message.answer("🔍 Ищу информацию...")
 
     announcements = await get_announcements_for_student(group_name, limit=10)
 
+    if user_id not in chat_histories:
+        chat_histories[user_id] = []
+
+    chat_histories[user_id].append({"role": "user", "content": message.text})
+
+    if len(chat_histories[user_id]) > 10:
+        chat_histories[user_id] = chat_histories[user_id][-10:]
+
     answer = await answer_student_question(
         question=message.text,
         student_name=full_name,
         group_name=group_name,
-        announcements=announcements
+        announcements=announcements,
+        history=chat_histories[user_id]
     )
+    chat_histories[user_id].append({"role": "assistant", "content": answer})
 
     await message.answer(answer)

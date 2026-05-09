@@ -17,7 +17,7 @@ except Exception as e:
     client = None
     AI_AVAILABLE = False
 
-MODEL = "openrouter/free"
+MODEL = "openrouter/auto"
 
 TYPE_ICONS = {
     "экзамен": "📝",
@@ -126,9 +126,15 @@ def build_context_text(announcements: list) -> str:
     return "\n".join(lines)
 
 
-async def answer_student_question(question: str, student_name: str, group_name: str, announcements: list) -> str:
+async def answer_student_question(
+    question: str,
+    student_name: str,
+    group_name: str,
+    announcements: list,
+    history: list = []
+) -> str:
     """
-    Отвечает на вопрос студента.
+    Отвечает на вопрос студента с учётом истории чата.
     Без AI — возвращает список последних объявлений.
     """
     context = build_context_text(announcements)
@@ -153,15 +159,18 @@ async def answer_student_question(question: str, student_name: str, group_name: 
 Правила:
 - Если вопрос касается объявлений, экзаменов, дедлайнов группы — отвечай на основе данных выше.
 - Если вопрос общий (как готовиться к экзамену, какой день недели, объяснение темы и т.п) — отвечай используя свои знания.
-- Отвечай коротко и по делу, только на русском/казахском языке, в зависимости от сообщения тебе."""
-
+- Учитывай историю переписки — если студент ссылается на предыдущий вопрос, понимай контекст.
+- Отвечай коротко и по делу, только на русском языке."""
 
         logger.info(f"answer_student_question: вопрос от {student_name}: {question[:60]}")
+
+        history_without_last = history[:-1] if history else []
 
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
+                *history_without_last,
                 {"role": "user", "content": question}
             ]
         )
