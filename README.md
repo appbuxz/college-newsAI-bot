@@ -46,8 +46,8 @@ Telegram-бот для автоматизации коммуникации ме�
 
 **1. Клонируй репозиторий:**
 ```bash
-git clone https://github.com/username/university-bot.git
-cd university-bot
+git clone https://github.com/appbuxz/college-newsAI-bot
+cd college-newsAI-bot
 ```
 
 **2. Установи зависимости:**
@@ -183,8 +183,8 @@ A Telegram bot for automating communication between university administration an
 
 **1. Clone the repository:**
 ```bash
-git clone https://github.com/username/university-bot.git
-cd university-bot
+git clone https://github.com/appbuxz/college-newsAI-bot
+cd college-newsAI-bot
 ```
 
 **2. Install dependencies:**
