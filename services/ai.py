@@ -34,28 +34,30 @@ PRIORITY_ICONS = {
 
 
 async def format_message(text: str) -> str:
-    """Форматирует сообщение для студентов"""
     if not AI_AVAILABLE:
         return text
+
     try:
         response = client.chat.completions.create(
             model=MODEL,
+            temperature=0.3,
             messages=[
-                {"role": "system", "content": "Сократи и сделай сообщение понятным для студентов. Отвечай на русском."},
+                {
+                    "role": "system",
+                    "content": "Сократи сообщение и сделай его понятным для студентов. Без лишнего текста."
+                },
                 {"role": "user", "content": text}
             ]
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content.strip()
+
     except Exception as e:
         logger.error(f"format_message ошибка: {e}")
         return text
 
 
+
 async def classify_message(text: str) -> dict:
-    """
-    Классифицирует сообщение администратора.
-    Без AI — возвращает базовую классификацию с оригинальным текстом.
-    """
     fallback = {
         "type": "объявление",
         "event_date": None,
@@ -64,63 +66,64 @@ async def classify_message(text: str) -> dict:
     }
 
     if not AI_AVAILABLE:
-        logger.warning("classify_message: AI недоступен, возвращаю fallback")
         return fallback
 
     try:
-        logger.info(f"classify_message: отправляю в OpenRouter: {text[:60]}")
         response = client.chat.completions.create(
             model=MODEL,
+            temperature=0.2,
             messages=[
                 {
                     "role": "system",
-                    "content": """Ты помощник для учебного заведения. Проанализируй сообщение и верни JSON:
+                    "content": """Ты классификатор сообщений.
+
+Верни строго JSON:
+
 {
-  "type": одно из ["экзамен", "дедлайн", "мероприятие", "объявление"],
-  "event_date": дата если есть (например "15 мая"), иначе null,
-  "priority": одно из ["высокая", "средняя", "низкая"],
-  "formatted_text": краткое понятное сообщение для студентов
+  "type": "экзамен | дедлайн | мероприятие | объявление",
+  "event_date": "дата или null",
+  "priority": "высокая | средняя | низкая",
+  "formatted_text": "короткий текст"
 }
-Отвечай ТОЛЬКО JSON, без пояснений."""
+
+Не добавляй ничего лишнего и не выдумывай."""
                 },
                 {"role": "user", "content": text}
             ]
         )
 
         raw = response.choices[0].message.content.strip()
-        logger.info(f"classify_message: ответ: {raw[:100]}")
-
         raw = raw.replace("```json", "").replace("```", "").strip()
+
         result = json.loads(raw)
 
-        result.setdefault("type", "объявление")
-        result.setdefault("event_date", None)
-        result.setdefault("priority", "средняя")
-        result.setdefault("formatted_text", text)
+        return {
+            "type": result.get("type", "объявление"),
+            "event_date": result.get("event_date"),
+            "priority": result.get("priority", "средняя"),
+            "formatted_text": result.get("formatted_text", text)
+        }
 
-        return result
-
-    except json.JSONDecodeError as e:
-        logger.error(f"classify_message: не удалось распарсить JSON: {e}")
-        return fallback
     except Exception as e:
-        logger.error(f"classify_message: ошибка: {e}")
+        logger.error(f"classify_message ошибка: {e}")
         return fallback
 
 
 def build_context_text(announcements: list) -> str:
-    """Формирует текстовый контекст из объявлений"""
     if not announcements:
         return ""
 
     lines = []
+
     for ann in announcements:
         type_, date, priority, text, sent_at = ann
         icon = TYPE_ICONS.get(type_, "📢")
+
         line = f"{icon} [{type_}]"
         if date:
             line += f" {date}:"
         line += f" {text}"
+
         lines.append(line)
 
     return "\n".join(lines)
@@ -133,60 +136,57 @@ async def answer_student_question(
     announcements: list,
     history: list = []
 ) -> str:
-    """
-    Отвечает на вопрос студента с учётом истории чата.
-    Без AI — возвращает список последних объявлений.
-    """
+
     context = build_context_text(announcements)
 
     if not AI_AVAILABLE or not client:
-        logger.warning("answer_student_question: AI недоступен")
         if not announcements:
-            return "📭 Для вашей группы пока нет объявлений."
-        return (
-            f"📋 Последние объявления для группы {group_name}:\n\n"
-            f"{context}\n\n"
-            "💡 ИИ-ассистент недоступен, показываю все объявления."
-        )
+            return "📭 Нет объявлений."
+        return f"📋 Объявления:\n\n{context}"
 
     try:
-        system_prompt = f"""Ты умный помощник студента учебного заведения.
-Студент: {student_name}, группа: {group_name}.
+        system_prompt = f"""
+Ты помощник студента.
 
-Вот последние объявления для его группы:
-{context if context else "Объявлений пока нет."}
-Как отвечать:
-- На вопросы об объявлениях, экзаменах, дедлайнах — используй данные выше.
-- На общие вопросы (химия, математика, история, даты,как готовиться к экзамену, какой день недели, объяснение темы и т.п) — отвечай используя поиск в интернете, не давая ссылок на ресурсы, или свои знания.
-- Отвечай чётко и по существу, без лишних слов и воды.
-- Если знаешь ответ — давай его сразу, не отправляй искать в учебниках, ищи сам.
-- Короткий вопрос = короткий,но понятный ответ. Развёрнутый вопрос = развёрнутый ответ.
-- Учитывай историю переписки — если студент ссылается на предыдущий вопрос, понимай контекст.
-- Отвечай коротко и по делу, на языке, на котором задали вопрос."""
+ВАЖНЫЕ ПРАВИЛА:
+- Отвечай ТОЛЬКО на текущий вопрос
+- НЕ объединяй ответы с предыдущими вопросами
+- НЕ делай списки, если пользователь не просил
+- НЕ повторяй старые ответы
+- НЕ добавляй лишнюю информацию
+- НЕ выдумывай факты
 
-        logger.info(f"answer_student_question: вопрос от {student_name}: {question[:60]}")
+Если вопрос:
+- про экзамены/объявления → используй только данные ниже
+- общий (химия, факты, подготовка и т.п) → отвечай своими знаниями
 
-        history_without_last = history[:-1] if history else []
+Если информации нет → напиши "информации нет"
+
+Объявления:
+{context if context else "нет"}
+
+Ответ:
+"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question}
+        ]
 
         response = client.chat.completions.create(
             model=MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                *history_without_last,
-                {"role": "user", "content": question}
-            ]
+            temperature=0.3,
+            messages=messages
         )
 
-        answer = response.choices[0].message.content
-        logger.info(f"answer_student_question: ответ: {answer[:100]}")
+        answer = response.choices[0].message.content.strip()
+
         return answer
 
     except Exception as e:
-        logger.error(f"answer_student_question: ошибка: {e}")
+        logger.error(f"answer_student_question ошибка: {e}")
+
         if not announcements:
-            return "📭 Для вашей группы пока нет объявлений."
-        return (
-            f"📋 Последние объявления для группы {group_name}:\n\n"
-            f"{context}\n\n"
-            "💡 ИИ-ассистент временно недоступен, показываю все объявления."
-        )
+            return "📭 Нет объявлений."
+
+        return f"📋 Объявления:\n\n{context}"
