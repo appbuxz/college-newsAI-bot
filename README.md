@@ -124,7 +124,7 @@ httpx==0.27.0
 |---------|-----|----------|
 | `/start` | Студент | Начало работы / регистрация |
 | `/admin` | Админ | Открыть админ-панель |
-| `/group ПО-110` | Админ | Показать студентов группы |
+| `/group ...` | Админ | Показать студентов группы |
 
 ---
 
@@ -261,7 +261,7 @@ httpx==0.27.0
 |---------|-----|-------------|
 | `/start` | Student | Start the bot / register |
 | `/admin` | Admin | Open the admin panel |
-| `/group GR-110` | Admin | Show students in a group |
+| `/group ...` | Admin | Show students in a group |
 
 ---
 
