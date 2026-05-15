@@ -3,7 +3,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from config import ADMIN_ID
+from config import ADMIN_IDS
 from keyboards.reply import main_kb
 from database import add_user, get_user_info, get_announcements_for_student
 from services.ai import answer_student_question
@@ -12,9 +12,18 @@ router = Router()
 
 chat_histories = {}
 
+course_kb = types.ReplyKeyboardMarkup(
+    keyboard=[
+        [types.KeyboardButton(text="1"), types.KeyboardButton(text="2")],
+        [types.KeyboardButton(text="3"), types.KeyboardButton(text="4")],
+    ],
+    resize_keyboard=True
+)
+
 class Register(StatesGroup):
     name = State()
     group = State()
+    course = State()
 
 
 # ------------------ СТАРТ ------------------
@@ -22,16 +31,15 @@ class Register(StatesGroup):
 @router.message(CommandStart())
 async def start(message: types.Message, state: FSMContext):
     await state.clear()
-
-    # Сбрасываем историю чата при /start
     chat_histories.pop(message.from_user.id, None)
 
     user = await get_user_info(message.from_user.id)
     if user:
-        full_name, group_name = user
+        full_name, group_name, course = user
+        course_str = f" | {course} курс" if course else ""
         await message.answer(
             f"👋 С возвращением, {full_name}!\n"
-            f"Группа: {group_name}\n\n"
+            f"📚 Группа: {group_name}{course_str}\n\n"
             "Задай любой вопрос — я отвечу на основе объявлений твоей группы.",
             reply_markup=types.ReplyKeyboardRemove()
         )
@@ -59,13 +67,26 @@ async def get_name(message: types.Message, state: FSMContext):
 
 @router.message(Register.group)
 async def get_group(message: types.Message, state: FSMContext):
+    await state.update_data(group=message.text)
+    await message.answer("Выберите курс:", reply_markup=course_kb)
+    await state.set_state(Register.course)
+
+
+@router.message(Register.course)
+async def get_course(message: types.Message, state: FSMContext):
+    if message.text not in ["1", "2", "3", "4"]:
+        await message.answer("Пожалуйста, выберите курс из кнопок ниже:", reply_markup=course_kb)
+        return
+
     data = await state.get_data()
-    await add_user(message.from_user.id, data["name"], message.text)
+    course = int(message.text)
+    await add_user(message.from_user.id, data["name"], data["group"], course)
 
     await message.answer(
         f"✅ Вы зарегистрированы!\n\n"
         f"👤 {data['name']}\n"
-        f"📚 Группа: {message.text}\n\n"
+        f"📚 Группа: {data['group']}\n"
+        f"🎓 Курс: {course}\n\n"
         "Теперь задайте любой вопрос — я отвечу на основе объявлений вашей группы.",
         reply_markup=types.ReplyKeyboardRemove()
     )
@@ -74,7 +95,7 @@ async def get_group(message: types.Message, state: FSMContext):
 
 # ------------------ ВОПРОС СТУДЕНТА ------------------
 
-@router.message(lambda msg: msg.from_user.id != ADMIN_ID)
+@router.message(lambda msg: msg.from_user.id not in ADMIN_IDS)
 async def student_question(message: types.Message):
     user = await get_user_info(message.from_user.id)
 
@@ -85,12 +106,12 @@ async def student_question(message: types.Message):
         )
         return
 
-    full_name, group_name = user
+    full_name, group_name, course = user
     user_id = message.from_user.id
 
     await message.answer("🔍 Ищу информацию...")
 
-    announcements = await get_announcements_for_student(group_name, limit=10)
+    announcements = await get_announcements_for_student(group_name, course=course, limit=10)
 
     if user_id not in chat_histories:
         chat_histories[user_id] = []
@@ -107,6 +128,6 @@ async def student_question(message: types.Message):
         announcements=announcements,
         history=chat_histories[user_id]
     )
-    chat_histories[user_id].append({"role": "assistant", "content": answer})
 
+    chat_histories[user_id].append({"role": "assistant", "content": answer})
     await message.answer(answer)
