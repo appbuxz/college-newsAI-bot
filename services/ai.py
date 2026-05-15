@@ -11,10 +11,13 @@ try:
         api_key=OPENROUTER_API_KEY,
         base_url="https://openrouter.ai/api/v1",
     )
+
     AI_AVAILABLE = True
     logger.info("OpenRouter клиент успешно создан")
+
 except Exception as e:
     logger.error(f"Не удалось создать OpenRouter клиент: {e}")
+
     client = None
     AI_AVAILABLE = False
 
@@ -32,6 +35,50 @@ PRIORITY_ICONS = {
     "средняя": "🟡",
     "низкая": "🟢",
 }
+
+COLLEGE_KEYWORDS = [
+    "экзамен",
+    "экзы",
+    "сессия",
+    "дедлайн",
+    "зачет",
+    "зачёт",
+    "пара",
+    "расписание",
+    "объявление",
+    "куратор",
+    "группа",
+    "кабинет",
+    "препод",
+    "преподаватель",
+]
+
+# Общие вопросы
+GENERAL_KEYWORDS = [
+    "выходной",
+    "выходные",
+    "праздник",
+    "календарь",
+    "май",
+    "июнь",
+    "июль",
+    "август",
+    "сегодня",
+    "завтра",
+    "погода",
+]
+
+
+def is_college_question(text: str) -> bool:
+    text = text.lower()
+
+    return any(word in text for word in COLLEGE_KEYWORDS)
+
+
+def is_general_question(text: str) -> bool:
+    text = text.lower()
+
+    return any(word in text for word in GENERAL_KEYWORDS)
 
 
 def parse_date_safe(date_str):
@@ -64,18 +111,19 @@ async def format_message(text: str) -> str:
                 {
                     "role": "system",
                     "content": """
-Ты сокращаешь сообщения для студентов колледжа.
+Ты сокращаешь сообщения для студентов.
 
 ПРАВИЛА:
 - Только русский язык.
-- Коротко и понятно.
-- Не меняй смысл.
+- Коротко.
+- Без воды.
 - Не придумывай информацию.
-- Без английского.
-- Без комментариев в скобках.
 """
                 },
-                {"role": "user", "content": text}
+                {
+                    "role": "user",
+                    "content": text
+                }
             ]
         )
 
@@ -116,39 +164,26 @@ async def classify_message(text: str) -> dict:
                 {
                     "role": "system",
                     "content": """
-Ты классификатор сообщений колледжа.
+Верни только JSON.
 
-Верни СТРОГО JSON.
-Без markdown.
-Без пояснений.
-Без ```json.
-
-Формат:
 {
   "type": "экзамен | дедлайн | мероприятие | объявление",
   "event_date": "YYYY-MM-DD или null",
   "priority": "высокая | средняя | низкая",
   "formatted_text": "краткий текст"
 }
-
-ПРАВИЛА:
-- Не придумывай даты.
-- Не придумывай типы.
-- Только русский язык.
 """
                 },
-                {"role": "user", "content": text}
+                {
+                    "role": "user",
+                    "content": text
+                }
             ]
         )
 
         raw = response.choices[0].message.content.strip()
 
-        raw = (
-            raw
-            .replace("```json", "")
-            .replace("```", "")
-            .strip()
-        )
+        raw = raw.replace("```json", "").replace("```", "").strip()
 
         result = json.loads(raw)
 
@@ -165,10 +200,6 @@ async def classify_message(text: str) -> dict:
 
 
 def build_context_text(announcements: list) -> str:
-    """
-    Формирует контекст только из актуальных объявлений.
-    """
-
     if not announcements:
         return ""
 
@@ -182,7 +213,7 @@ def build_context_text(announcements: list) -> str:
 
             parsed_date = parse_date_safe(event_date)
 
-            # пропускаем старые события
+            # скрываем старые события
             if parsed_date and parsed_date < today:
                 continue
 
@@ -211,78 +242,72 @@ async def answer_student_question(
     history: list = []
 ) -> str:
 
-    context = build_context_text(announcements)
-
     today_str = date.today().strftime("%d.%m.%Y")
+    college_question = is_college_question(question)
+    general_question = is_general_question(question)
+
+    context = build_context_text(announcements) if college_question else ""
 
     if not AI_AVAILABLE or not client:
-        if not announcements:
-            return "📭 Нет объявлений."
 
-        return f"📋 Объявления:\n\n{context}"
+        if college_question:
+            if not context:
+                return "В объявлениях нет информации."
+
+            return context
+
+        return "Не удалось получить ответ."
 
     try:
 
-        system_prompt = f"""
-Ты помощник студента колледжа в Казахстане.
+        # ------------------------
+        # ПРОМПТ ДЛЯ КОЛЛЕДЖА
+        # ------------------------
 
-СТУДЕНТ:
-Имя: {student_name}
+        if college_question:
+
+            system_prompt = f"""
+Ты помощник студента колледжа Казахстана.
+
+Сегодня: {today_str}
+
+Студент: {student_name}
 Группа: {group_name}
-
-СЕГОДНЯ:
-{today_str}
 
 АКТУАЛЬНЫЕ ОБЪЯВЛЕНИЯ:
 {context if context else "Объявлений нет"}
 
 ПРАВИЛА:
-
-1. ЯЗЫК
-- Отвечай строго на языке пользователя.
-- Русский -> русский.
-- Казахский -> казахский.
-- Английский запрещён.
-
-2. ОБЪЯВЛЕНИЯ И ВОПРОСЫ
-
-- Если вопрос связан с:
-  экзаменами,
-  дедлайнами,
-  расписанием группы,
-  объявлениями колледжа —
-  используй ТОЛЬКО объявления выше.
-
-- Если в объявлениях нет информации по таким вопросам —
-  так и скажи:
+- Используй ТОЛЬКО объявления.
+- Не придумывай даты.
+- Не придумывай экзамены.
+- Если информации нет —
+  ответь:
   "В объявлениях нет информации."
 
-- Если вопрос ОБЩИЙ:
-  праздники,
-  выходные,
-  календарь,
-  погода,
-  учёба,
-  предметы,
-  помощь,
-  теория,
-  советы —
-  отвечай используя свои знания или общую информацию из интернета.
+- Отвечай кратко.
+- Только на языке пользователя.
+- Без английского.
+"""
 
-3. СТИЛЬ
-- Коротко.
-- Чётко.
-- Без воды.
-- Без markdown.
-- Без скобок.
-- Без служебных комментариев.
+        # ------------------------
+        # ПРОМПТ ДЛЯ ОБЩИХ ВОПРОСОВ
+        # ------------------------
 
-4. ОБЩИЕ ВОПРОСЫ
-- Если вопрос не связан с объявлениями —
-  отвечай своими знаниями.
+        else:
 
-5. ИСТОРИЯ
-- Учитывай историю сообщений.
+            system_prompt = f"""
+Ты полезный помощник студента в Казахстане.
+
+Сегодня: {today_str}
+
+ПРАВИЛА:
+- Отвечай на языке пользователя.
+- Можно использовать свои знания.
+- Если вопрос про праздники или выходные —
+  отвечай по календарю Казахстана.
+- Отвечай кратко и понятно.
+- Без английского.
 """
 
         history_without_last = history[:-1] if history else []
@@ -321,7 +346,4 @@ async def answer_student_question(
     except Exception as e:
         logger.error(f"answer_student_question ошибка: {e}")
 
-        if not announcements:
-            return "📭 Нет объявлений."
-
-        return f"📋 Объявления:\n\n{context}"
+        return "Ошибка получения ответа."
