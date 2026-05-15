@@ -213,7 +213,6 @@ def build_context_text(announcements: list) -> str:
 
             parsed_date = parse_date_safe(event_date)
 
-            # скрываем старые события
             if parsed_date and parsed_date < today:
                 continue
 
